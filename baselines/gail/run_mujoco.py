@@ -77,14 +77,17 @@ def main(args):
     U.make_session(num_cpu=1).__enter__()
     set_global_seeds(args.seed)
     env = gym.make(args.env_id)
+
     # delay training env
+    # 返回next_obs,delay_reward(0/累积奖赏),done,info
     env = DelayRewardWrapper(env, args.reward_freq, 1000)
+    # 评估Env，真实Env
     eval_env = gym.make(args.env_id)
 
     def policy_fn(name, ob_space, ac_space, reuse=False):
         return mlp_policy.MlpPolicy(name=name, ob_space=ob_space, ac_space=ac_space,
                                     reuse=reuse, hid_size=args.policy_hidden_size, num_hid_layers=2)
-
+    # 设置随机种子
     env.seed(args.seed)
     eval_env.seed(args.seed)
     gym.logger.setLevel(logging.WARN)

@@ -19,23 +19,36 @@ from baselines.common.mpi_adam import MpiAdam
 from baselines.common.cg import cg
 from baselines.gail.statistics import stats
 
-
+# rollout 返回[ob, ac, done, rew, d_rew]数据，数据长度为1000
+# eval_env真实环境
 def rollout(pi, reward_giver, eval_env, stochastic=False, path_length=1000, render=False, speedup=None):
+    # 获取维度Da:action,Do:observation
     Da = eval_env.action_space.shape[0]
     Do = eval_env.observation_space.shape[0]
 
+    # 重置真实环境
     observation = eval_env.reset()
+
+    # 建立list存储observation和action(length, Do/Da)
     observations = np.zeros((path_length + 1, Do))
     actions = np.zeros((path_length, Da))
+
+    # 实验terminal的数据(length, 1)
     terminals = np.zeros((path_length, ))
+
+    # 奖赏rewards(length, 1)
     rewards = np.zeros((path_length, ))
+
+    # 判别器的奖赏(length, 1)
     discriminator_rewards = np.zeros((path_length,))
 
     t = 0
+    # 执行1000次
     for t in range(path_length):
         action, _ = pi.act(stochastic, observation)
         # action, agent_info = policy.get_action(observation)
         next_obs, reward, terminal, env_info = eval_env.step(action)
+        # 获取数据[ob, ac, done, rew, d_rew]
         actions[t] = action
         terminals[t] = terminal
         rewards[t] = reward
@@ -51,9 +64,10 @@ def rollout(pi, reward_giver, eval_env, stochastic=False, path_length=1000, rend
 
         if terminal:
             break
-
+    # 存储最后一个ob
     observations[t + 1] = observation
 
+    # 返回字典
     path = {
         'observations': observations[:t + 1],
         'actions': actions[:t + 1],
@@ -65,7 +79,7 @@ def rollout(pi, reward_giver, eval_env, stochastic=False, path_length=1000, rend
 
     return path
 
-
+# 返回多个数据path -> paths 10次，1000 * 10
 def rollouts(pi, reward_giver, eval_env, eval_n_episodes, stochastic=False):
     paths = [
         rollout(pi, reward_giver, eval_env, stochastic)
@@ -74,7 +88,7 @@ def rollouts(pi, reward_giver, eval_env, eval_n_episodes, stochastic=False):
 
     return paths
 
-
+# 评估策略
 def evaluate_policy(pi, reward_giver, eval_env, total_samples, tstart, eval_n_episodes=10, stochastic=False):
     """Perform evaluation for the current policy.
     :param epoch: The epoch number.
@@ -83,11 +97,14 @@ def evaluate_policy(pi, reward_giver, eval_env, total_samples, tstart, eval_n_ep
 
     if eval_n_episodes < 1:
         return
-
+    # 返回rollout的数据，大小为(10, 1000, )
     paths = rollouts(pi, reward_giver, eval_env, eval_n_episodes, stochastic)
 
+    # 累积奖赏reward(10,1)
     total_returns = [path['rewards'].sum() for path in paths]
+    # 判别器奖赏d_reward(10,1)
     discriminator_total_returns = [path['discriminator_rewards'].sum() for path in paths]
+    # 累积奖赏reward的长度(10,1)
     episode_lengths = [len(p['rewards']) for p in paths]
 
     # logger.record_tabular('current-epoch', epoch)
@@ -152,14 +169,20 @@ def traj_segment_generator(pi, env, reward_giver, reward_coeff, horizon, stochas
             ep_true_rets = []
             ep_lens = []
         i = t % horizon
+
+        # 存储
         obs[i] = ob
         vpreds[i] = vpred
         news[i] = new
         acs[i] = ac
+        # 前一个动作
         prevacs[i] = prevac
+
         rew = reward_giver.get_reward(ob, ac)
         ob, true_rew, new, _ = env.step(ac)
         assert reward_coeff <= 1
+
+        # rew的组成：reward_coeff:(1-reward_coeff)的d_rew和env_rew的结合
         rew = reward_coeff * reward_giver.get_reward(ob, ac) + (1 - reward_coeff) * true_rew
         rews[i] = rew
         true_rews[i] = true_rew
@@ -346,7 +369,7 @@ def learn(env, eval_env, policy_func, reward_giver, expert_dataset, rank,
                 with timed("cg"):
                     stepdir = cg(fisher_vector_product, g, cg_iters=cg_iters, verbose=rank == 0)
                 assert np.isfinite(stepdir).all()
-                shs = .5*stepdir.dot(fisher_vector_product(stepdir))
+                shs = .5 * stepdir.dot(fisher_vector_product(stepdir))
                 lm = np.sqrt(shs / max_kl)
                 # logger.log("lagrange multiplier:", lm, "gnorm:", np.linalg.norm(g))
                 fullstep = stepdir / lm
@@ -395,8 +418,7 @@ def learn(env, eval_env, policy_func, reward_giver, expert_dataset, rank,
         logger.log(fmt_row(13, reward_giver.loss_name))
         batch_size = len(ob) // d_step
         d_losses = []  # list of tuples, each of which gives the loss for a minibatch
-        for ob_batch, ac_batch in dataset.iterbatches((ob, ac),
-                                                      include_final_partial_batch=False,
+        for ob_batch, ac_batch in dataset.iterbatches((ob, ac), include_final_partial_batch=False,
                                                       batch_size=batch_size):
             ob_expert, ac_expert = expert_dataset.get_next_batch(len(ob_batch))
             # update running mean/std for reward_giver
